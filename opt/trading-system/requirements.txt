@@ -1,0 +1,25 @@
+﻿# requirements.txt - 优化内存使用
+fastapi==0.104.1
+uvicorn==0.24.0
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.23
+pydantic==2.5.0
+
+# AI和解析
+openai==1.35.0
+tiktoken==0.7.0
+tenacity==8.2.3
+
+# 网页抓取（轻量级）
+requests==2.31.0
+beautifulsoup4==4.12.2
+selenium==4.15.0
+
+# 邮件和工具
+aiosmtplib==3.0.1
+python-dotenv==1.0.0
+schedule==1.2.0
+
+# 优化包（减少内存使用）
+asyncpg==0.29.0  # 替代psycopg2，更高效
+httpx==0.25.2    # 替代requests，异步支持
