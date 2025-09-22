@@ -1,4 +1,5 @@
 ﻿# requirements.txt - 优化内存使用
+psutil==6.1.1
 fastapi==0.104.1
 uvicorn==0.24.0
 psycopg2-binary==2.9.9
