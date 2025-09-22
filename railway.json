@@ -2,6 +2,9 @@
   "build": {
     "builder": "NIXPACKS"
   },
+  "predeploy": {
+    "command": "bash scripts/pre_launch_check.sh"
+  },
   "deploy": {
     "startCommand": "python -m uvicorn src.main:app --host 0.0.0.0 --port $PORT",
     "healthcheckPath": "/health",
