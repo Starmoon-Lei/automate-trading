@@ -25,4 +25,4 @@ ENV PYTHONUNBUFFERED=1
 EXPOSE $PORT
 
 # 启动命令
-CMD ["python", "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "$PORT"]
+CMD python -m uvicorn src.main:app --host 0.0.0.0 --port $PORT
