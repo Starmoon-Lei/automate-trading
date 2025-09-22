@@ -115,8 +115,10 @@ async def health_check():
         
         # 检查数据库连接
         db = SessionLocal()
-        db.execute("SELECT 1")
-        db.close()
+        try:
+            db.execute("SELECT 1").fetchone()
+        finally:
+            db.close()
         
         # 检查AI解析器状态
         ai_stats = trading_engine.ai_parser.get_usage_stats()
