@@ -114,8 +114,17 @@ async def health_check():
         process = psutil.Process()
         memory_mb = process.memory_info().rss / 1024 / 1024
         
-        # 检查数据库连接
-        await db_manager.execute_query("SELECT 1")
+        # 检查数据库连接（如果配置了的话）
+        if settings.DATABASE_URL:
+            try:
+                await db_manager.execute_query("SELECT 1")
+                database_status = "connected"
+            except Exception as e:
+                logger.warning(f"Database connection failed: {e}")
+                database_status = "error"
+        else:
+            logger.info("DATABASE_URL not configured, skipping database check")
+            database_status = "not configured"
         
         # 检查AI解析器状态
         ai_stats = trading_engine.ai_parser.get_usage_stats()
@@ -126,7 +135,7 @@ async def health_check():
             "memory_mb": round(memory_mb, 1),
             "memory_limit_mb": settings.MAX_MEMORY_MB,
             "openai_budget_used": f"{ai_stats['usage_percent']:.1f}%",
-            "database": "connected"
+            "database": database_status
         }
         
     except Exception as e:
