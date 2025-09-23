@@ -71,17 +71,7 @@ class SystemMetrics(Base):
     trades_executed = Column(Integer, default=0)
     email_alerts_sent = Column(Integer, default=0)
 
-# 优化的数据库连接（免费版）
-engine = create_engine(
-    settings.DATABASE_URL,
-    pool_size=3,        # 减少连接池大小
-    max_overflow=2,     # 减少溢出连接
-    pool_timeout=30,
-    pool_recycle=1800,  # 30分钟回收连接
-    echo=False          # 关闭SQL日志节省内存
-)
-
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# SQLAlchemy sync engine removed - using async only
 
 # 异步数据库访问（更高效）
 class AsyncDatabaseManager:
