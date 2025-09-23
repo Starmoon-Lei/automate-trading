@@ -1,3 +1,6 @@
+# claude
+.claude
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -118,3 +121,6 @@ Desktop.ini
 # Test output
 test-output/
 # End Generation Here
+
+# venv
+venv/

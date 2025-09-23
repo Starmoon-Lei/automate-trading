@@ -44,19 +44,26 @@ async def lifespan(app: FastAPI):
     # 启动后台调度器
     scheduler_task = asyncio.create_task(trading_engine.run_scheduler())
 
-    # 发送启动通知
+    # 发送启动通知 (非阻塞，带超时)
     try:
         from src.utils.email_service import email_service
-        await email_service.send_system_alert(
-            f"🚀 免费AI交易系统已启动\n\n"
-            f"📊 配置信息:\n"
-            f"- 高置信度阈值: {settings.HIGH_CONFIDENCE_THRESHOLD}\n"
-            f"- 监控博主数量: {len(settings.BLOGGER_IDS)}\n"
-            f"- OpenAI预算: ${settings.OPENAI_MONTHLY_BUDGET}/月\n"
-            f"- 检查间隔: {settings.CHECK_INTERVAL_MINUTES}分钟\n\n"
-            f"系统将自动监控社媒信号并发送邮件通知！",
-            "SUCCESS"
+        # 使用asyncio.wait_for添加5秒超时，避免阻塞启动
+        await asyncio.wait_for(
+            email_service.send_system_alert(
+                f"🚀 免费AI交易系统已启动\n\n"
+                f"📊 配置信息:\n"
+                f"- 高置信度阈值: {settings.HIGH_CONFIDENCE_THRESHOLD}\n"
+                f"- 监控博主数量: {len(settings.BLOGGER_IDS)}\n"
+                f"- OpenAI预算: ${settings.OPENAI_MONTHLY_BUDGET}/月\n"
+                f"- 检查间隔: {settings.CHECK_INTERVAL_MINUTES}分钟\n\n"
+                f"系统将自动监控社媒信号并发送邮件通知！",
+                "SUCCESS"
+            ),
+            timeout=5.0
         )
+        logger.info("Startup notification sent successfully")
+    except asyncio.TimeoutError:
+        logger.warning("Startup notification timed out - continuing without email")
     except Exception as e:
         logger.error(f"Failed to send startup notification: {e}")
 
@@ -72,10 +79,16 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
 
-    # 发送关闭通知
+    # 发送关闭通知 (非阻塞，带超时)
     try:
         from src.utils.email_service import email_service
-        await email_service.send_system_alert("🛑 AI交易系统已停止", "INFO")
+        await asyncio.wait_for(
+            email_service.send_system_alert("🛑 AI交易系统已停止", "INFO"),
+            timeout=3.0
+        )
+        logger.info("Shutdown notification sent successfully")
+    except asyncio.TimeoutError:
+        logger.warning("Shutdown notification timed out")
     except Exception as e:
         logger.error(f"Failed to send shutdown notification: {e}")
 
@@ -108,12 +121,22 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """健康检查"""
+    """轻量级健康检查 - 专为Railway部署优化"""
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "service": "AI Trading System",
+        "version": "1.0.0"
+    }
+
+@app.get("/health/detailed")
+async def detailed_health_check():
+    """详细健康检查 - 包含所有系统状态"""
     try:
         # 检查内存使用
         process = psutil.Process()
         memory_mb = process.memory_info().rss / 1024 / 1024
-        
+
         # 检查数据库连接（如果配置了的话）
         if settings.DATABASE_URL:
             try:
@@ -125,21 +148,23 @@ async def health_check():
         else:
             logger.info("DATABASE_URL not configured, skipping database check")
             database_status = "not configured"
-        
+
         # 检查AI解析器状态
         ai_stats = trading_engine.ai_parser.get_usage_stats()
-        
+
         return {
             "status": "healthy",
             "timestamp": datetime.now().isoformat(),
             "memory_mb": round(memory_mb, 1),
             "memory_limit_mb": settings.MAX_MEMORY_MB,
             "openai_budget_used": f"{ai_stats['usage_percent']:.1f}%",
-            "database": database_status
+            "database": database_status,
+            "service": "AI Trading System",
+            "version": "1.0.0"
         }
-        
+
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
+        logger.error(f"Detailed health check failed: {e}")
         raise HTTPException(status_code=500, detail=f"System unhealthy: {e}")
 
 @app.get("/stats")
