@@ -3,11 +3,11 @@ import asyncio
 import logging
 import gc
 from typing import List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime
 from src.parsers.openai_parser import OptimizedOpenAIParser
 from src.monitors.social_monitor import LightweightSocialMonitor
 from src.utils.email_service import email_service
-from src.models.database import AsyncDatabaseManager, SessionLocal, AISignal, BloggerPost, Trade, SystemMetrics
+from src.models.database import db_manager
 from src.config.settings import settings
 import json
 import psutil
@@ -17,7 +17,7 @@ class MemoryOptimizedTradingEngine:
     
     def __init__(self):
         self.ai_parser = OptimizedOpenAIParser()
-        self.db_manager = AsyncDatabaseManager()
+        self.db_manager = db_manager
         self.logger = logging.getLogger(__name__)
         
         # 统计数据
@@ -123,11 +123,33 @@ class MemoryOptimizedTradingEngine:
             low_conf_signals = []
             
             for signal in result.signals:
-                if (signal.confidence >= settings.HIGH_CONFIDENCE_THRESHOLD and 
-                    result.credibility_score >= settings.MIN_CREDIBILITY_SCORE):
-                    high_conf_signals.append(signal)
-                elif signal.confidence >= settings.MEDIUM_CONFIDENCE_THRESHOLD:
-                    low_conf_signals.append(signal)
+                try:
+                    # Validate signal has required attributes
+                    if not hasattr(signal, 'confidence') or signal.confidence is None:
+                        self.logger.warning(f"Signal missing confidence attribute: {signal}")
+                        continue
+
+                    if not hasattr(signal, 'symbol'):
+                        self.logger.warning(f"Signal missing symbol attribute: {signal}")
+                        continue
+
+                    # Set default risk_level if missing
+                    if not hasattr(signal, 'risk_level'):
+                        signal.risk_level = "UNKNOWN"
+
+                    # Now safe to access attributes
+                    if (signal.confidence >= settings.HIGH_CONFIDENCE_THRESHOLD and
+                        result.credibility_score >= settings.MIN_CREDIBILITY_SCORE):
+                        high_conf_signals.append(signal)
+                    elif signal.confidence >= settings.MEDIUM_CONFIDENCE_THRESHOLD:
+                        low_conf_signals.append(signal)
+
+                except AttributeError as e:
+                    self.logger.error(f"Signal missing required attribute: {e}")
+                    continue
+                except Exception as e:
+                    self.logger.error(f"Error processing signal: {e}")
+                    continue
             
             # 处理高置信度信号 - 自动执行（模拟）
             if high_conf_signals:

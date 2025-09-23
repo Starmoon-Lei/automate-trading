@@ -104,14 +104,21 @@ class AsyncDatabaseManager:
     async def execute_query(self, query: str, *args):
         if not self.pool:
             await self.connect()
-        
+
         async with self.pool.acquire() as connection:
             return await connection.fetchrow(query, *args)
-    
+
+    async def fetch_all(self, query: str, *args):
+        if not self.pool:
+            await self.connect()
+
+        async with self.pool.acquire() as connection:
+            return await connection.fetch(query, *args)
+
     async def execute_many(self, query: str, args_list):
         if not self.pool:
             await self.connect()
-        
+
         async with self.pool.acquire() as connection:
             return await connection.executemany(query, args_list)
 

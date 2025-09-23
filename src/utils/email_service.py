@@ -1,8 +1,8 @@
 # src/utils/email_service.py
 import asyncio
 import aiosmtplib
-from email.mime.text import MimeText
-from email.mime.multipart import MimeMultipart
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 import json
 from typing import List, Dict, Any
 from datetime import datetime
@@ -29,17 +29,17 @@ class GmailEmailService:
             
         try:
             # 创建邮件
-            msg = MimeMultipart('alternative')
+            msg = MIMEMultipart('alternative')
             msg['From'] = settings.SMTP_USERNAME
             msg['To'] = to_email
             msg['Subject'] = subject
             
             # 添加文本内容
-            msg.attach(MimeText(body, 'plain', 'utf-8'))
+            msg.attach(MIMEText(body, 'plain', 'utf-8'))
             
             # 添加HTML内容
             if html_body:
-                msg.attach(MimeText(html_body, 'html', 'utf-8'))
+                msg.attach(MIMEText(html_body, 'html', 'utf-8'))
             
             # 发送邮件
             await aiosmtplib.send(

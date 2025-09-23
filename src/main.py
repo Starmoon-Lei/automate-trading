@@ -3,6 +3,7 @@ import asyncio
 import logging
 import sys
 from datetime import datetime
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -12,7 +13,7 @@ import gc
 import psutil
 
 from src.trading_engine import trading_engine
-from src.models.database import SessionLocal, AISignal, Trade, SystemMetrics
+from src.models.database import db_manager
 from src.config.settings import settings
 
 # 配置日志
@@ -26,38 +27,23 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-# 创建FastAPI应用
-app = FastAPI(
-    title="Free AI Trading System",
-    description="OpenAI + Supabase + Railway.app 免费AI交易系统",
-    version="1.0.0"
-)
-
-# CORS中间件
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # 全局变量
 scheduler_task = None
 
-@app.on_event("startup")
-async def startup_event():
-    """启动事件"""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理"""
     global scheduler_task
-    
+
+    # 启动逻辑
     logger.info("🚀 Starting Free AI Trading System...")
     logger.info(f"📊 Configuration: High confidence = {settings.HIGH_CONFIDENCE_THRESHOLD}")
     logger.info(f"👥 Monitoring {len(settings.BLOGGER_IDS)} bloggers")
     logger.info(f"💰 OpenAI budget: ${settings.OPENAI_MONTHLY_BUDGET}/month")
-    
+
     # 启动后台调度器
     scheduler_task = asyncio.create_task(trading_engine.run_scheduler())
-    
+
     # 发送启动通知
     try:
         from src.utils.email_service import email_service
@@ -74,26 +60,41 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Failed to send startup notification: {e}")
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """关闭事件"""
-    global scheduler_task
-    
+    yield
+
+    # 关闭逻辑
     logger.info("🛑 Shutting down AI Trading System...")
-    
+
     if scheduler_task:
         scheduler_task.cancel()
         try:
             await scheduler_task
         except asyncio.CancelledError:
             pass
-    
+
     # 发送关闭通知
     try:
         from src.utils.email_service import email_service
         await email_service.send_system_alert("🛑 AI交易系统已停止", "INFO")
     except Exception as e:
         logger.error(f"Failed to send shutdown notification: {e}")
+
+# 创建FastAPI应用
+app = FastAPI(
+    lifespan=lifespan,
+    title="Free AI Trading System",
+    description="OpenAI + Supabase + Railway.app 免费AI交易系统",
+    version="1.0.0"
+)
+
+# CORS中间件
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/")
 async def root():
@@ -114,11 +115,7 @@ async def health_check():
         memory_mb = process.memory_info().rss / 1024 / 1024
         
         # 检查数据库连接
-        db = SessionLocal()
-        try:
-            db.execute("SELECT 1").fetchone()
-        finally:
-            db.close()
+        await db_manager.execute_query("SELECT 1")
         
         # 检查AI解析器状态
         ai_stats = trading_engine.ai_parser.get_usage_stats()
@@ -140,31 +137,41 @@ async def health_check():
 async def get_stats():
     """获取系统统计"""
     try:
-        db = SessionLocal()
-        
         # 今日统计
         today = datetime.now().date()
-        today_signals = db.query(AISignal).filter(
-            AISignal.timestamp >= today
-        ).count()
-        
-        today_high_conf = db.query(AISignal).filter(
-            AISignal.timestamp >= today,
-            AISignal.confidence >= settings.HIGH_CONFIDENCE_THRESHOLD
-        ).count()
-        
-        today_trades = db.query(Trade).filter(
-            Trade.timestamp >= today
-        ).count()
-        
+
+        # 使用异步查询获取今日信号数量
+        today_signals_query = """
+            SELECT COUNT(*) FROM ai_signals
+            WHERE timestamp::date = $1
+        """
+        today_signals_result = await db_manager.execute_query(today_signals_query, today)
+        today_signals = today_signals_result['count'] if today_signals_result else 0
+
+        # 高置信度信号数量
+        today_high_conf_query = """
+            SELECT COUNT(*) FROM ai_signals
+            WHERE timestamp::date = $1 AND confidence >= $2
+        """
+        today_high_conf_result = await db_manager.execute_query(
+            today_high_conf_query, today, settings.HIGH_CONFIDENCE_THRESHOLD
+        )
+        today_high_conf = today_high_conf_result['count'] if today_high_conf_result else 0
+
+        # 今日交易数量
+        today_trades_query = """
+            SELECT COUNT(*) FROM trades
+            WHERE timestamp::date = $1
+        """
+        today_trades_result = await db_manager.execute_query(today_trades_query, today)
+        today_trades = today_trades_result['count'] if today_trades_result else 0
+
         # AI使用统计
         ai_stats = trading_engine.ai_parser.get_usage_stats()
-        
+
         # 内存使用
         process = psutil.Process()
         memory_mb = process.memory_info().rss / 1024 / 1024
-        
-        db.close()
         
         return {
             "today_stats": {
@@ -193,30 +200,39 @@ async def get_stats():
 async def get_recent_signals(limit: int = 20):
     """获取最近的信号"""
     try:
-        db = SessionLocal()
-        
-        signals = db.query(AISignal).order_by(
-            AISignal.timestamp.desc()
-        ).limit(limit).all()
-        
-        db.close()
-        
+        # 使用异步查询获取最近的信号
+        signals_query = """
+            SELECT id, symbol, action, confidence, target_price, reasoning,
+                   risk_level, status, timestamp
+            FROM ai_signals
+            ORDER BY timestamp DESC
+            LIMIT $1
+        """
+
+        signals_result = await db_manager.fetch_all(signals_query, limit)
+
+        signals_list = []
+        if signals_result:
+            for signal in signals_result:
+                reasoning = signal['reasoning']
+                if reasoning and len(reasoning) > 100:
+                    reasoning = reasoning[:100] + "..."
+
+                signals_list.append({
+                    "id": signal['id'],
+                    "symbol": signal['symbol'],
+                    "action": signal['action'],
+                    "confidence": signal['confidence'],
+                    "target_price": signal['target_price'],
+                    "reasoning": reasoning,
+                    "risk_level": signal['risk_level'],
+                    "status": signal['status'],
+                    "timestamp": signal['timestamp'].isoformat() if signal['timestamp'] else None
+                })
+
         return {
-            "signals": [
-                {
-                    "id": signal.id,
-                    "symbol": signal.symbol,
-                    "action": signal.action,
-                    "confidence": signal.confidence,
-                    "target_price": signal.target_price,
-                    "reasoning": signal.reasoning[:100] + "..." if len(signal.reasoning) > 100 else signal.reasoning,
-                    "risk_level": signal.risk_level,
-                    "status": signal.status,
-                    "timestamp": signal.timestamp.isoformat()
-                }
-                for signal in signals
-            ],
-            "total": len(signals)
+            "signals": signals_list,
+            "total": len(signals_list)
         }
         
     except Exception as e:
@@ -227,28 +243,32 @@ async def get_recent_signals(limit: int = 20):
 async def get_recent_trades(limit: int = 10):
     """获取最近的交易"""
     try:
-        db = SessionLocal()
-        
-        trades = db.query(Trade).order_by(
-            Trade.timestamp.desc()
-        ).limit(limit).all()
-        
-        db.close()
-        
+        # 使用异步查询获取最近的交易
+        trades_query = """
+            SELECT id, symbol, action, quantity, entry_price, status, timestamp
+            FROM trades
+            ORDER BY timestamp DESC
+            LIMIT $1
+        """
+
+        trades_result = await db_manager.fetch_all(trades_query, limit)
+
+        trades_list = []
+        if trades_result:
+            for trade in trades_result:
+                trades_list.append({
+                    "id": trade['id'],
+                    "symbol": trade['symbol'],
+                    "action": trade['action'],
+                    "quantity": trade['quantity'],
+                    "entry_price": trade['entry_price'],
+                    "status": trade['status'],
+                    "timestamp": trade['timestamp'].isoformat() if trade['timestamp'] else None
+                })
+
         return {
-            "trades": [
-                {
-                    "id": trade.id,
-                    "symbol": trade.symbol,
-                    "action": trade.action,
-                    "quantity": trade.quantity,
-                    "entry_price": trade.entry_price,
-                    "status": trade.status,
-                    "timestamp": trade.timestamp.isoformat()
-                }
-                for trade in trades
-            ],
-            "total": len(trades)
+            "trades": trades_list,
+            "total": len(trades_list)
         }
         
     except Exception as e:
